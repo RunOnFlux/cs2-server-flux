@@ -1,0 +1,63 @@
+[
+  {
+    "id": "matchzy",
+    "name": "MatchZy",
+    "repo": "shobhit-pathak/MatchZy",
+    "asset": "^MatchZy-[0-9.]+\\.zip$",
+    "category": "Matches",
+    "description": "5v5 matches and scrims: ready-up, knife round, side pick, pause, coach, backups of every round, demos and stats. Practice mode with grenade trajectories (.prac).",
+    "url": "https://shobhit-pathak.github.io/MatchZy/"
+  },
+  {
+    "id": "retakes",
+    "name": "Retakes",
+    "repo": "B3none/cs2-retakes",
+    "asset": "^RetakesPlugin-[0-9.]+\\.zip$",
+    "category": "Game modes",
+    "description": "Retakes: every round starts with the bomb planted and the CTs retaking the site. Spawns for the active duty maps are included.",
+    "url": "https://github.com/B3none/cs2-retakes",
+    "conflicts": [
+      "matchzy",
+      "deathmatch"
+    ]
+  },
+  {
+    "id": "instadefuse",
+    "name": "Instadefuse",
+    "repo": "B3none/cs2-instadefuse",
+    "asset": "\\.zip$",
+    "category": "Game modes",
+    "description": "A CT defuses instantly when nothing can stop the defuse any more. Made for retakes.",
+    "url": "https://github.com/B3none/cs2-instadefuse"
+  },
+  {
+    "id": "clutch-announce",
+    "name": "Clutch Announce",
+    "repo": "B3none/cs2-clutch-announce",
+    "asset": "\\.zip$",
+    "category": "Game modes",
+    "description": "Announces clutches (1vX wins) in chat. Made for retakes.",
+    "url": "https://github.com/B3none/cs2-clutch-announce"
+  },
+  {
+    "id": "deathmatch",
+    "name": "Deathmatch",
+    "repo": "NockyCZ/CS2-Deathmatch",
+    "asset": "^Deathmatch\\.zip$",
+    "category": "Game modes",
+    "description": "Custom deathmatch: gun menus, custom spawns, several modes in rotation, headshot-only and pistol rounds. Use it with the Deathmatch game mode.",
+    "url": "https://github.com/NockyCZ/CS2-Deathmatch",
+    "conflicts": [
+      "retakes"
+    ]
+  },
+  {
+    "id": "mapchooser",
+    "name": "GG1 MapChooser",
+    "repo": "ssypchenko/GG1MapChooser",
+    "asset": "^GG1MapChooser\\.[0-9.]+\\.zip$",
+    "category": "Maps",
+    "description": "Map votes at the end of each match, !rtv (rock the vote) and !nominate, among the maps of your map cycle (the panel writes its list, cfg/GGMCmaps.json, when you save the cycle).",
+    "url": "https://github.com/ssypchenko/GG1MapChooser"
+  }
+]

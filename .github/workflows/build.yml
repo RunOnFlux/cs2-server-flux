@@ -1,0 +1,92 @@
+name: Test, build and publish
+
+# The game is not in the image (SteamCMD installs it on the first start), so there is no upstream
+# release to follow: a push to main publishes, and the weekly run rebuilds on a patched
+# steamcmd/steamcmd base. Publishing :latest DOES reach running servers: FluxOS's image update
+# service checks every app's tag every six hours and soft-redeploys onto a new image. Hence the
+# image test before the push.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    # Mondays: the base image's security updates and a current SteamCMD, same scripts.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: runonflux/cs2-server-flux
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Syntax
+        run: |
+          for f in scripts/*.sh tests/*.sh tests/image/*.sh; do bash -n "$f"; done
+          python3 -m py_compile scripts/*.py tests/*.py
+
+      # Pinned, so "shellcheck is clean on my machine" means the same thing here.
+      - name: Shellcheck
+        run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -x scripts/*.sh tests/*.sh tests/image/*.sh
+
+      - name: Unit tests
+        run: ./tests/test-flux.sh
+
+      - name: Version is a version
+        run: grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' VERSION
+
+  build:
+    needs: test
+    # A pull request gets the tests and nothing else: it must not publish.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Version
+        run: echo "VERSION=$(tr -d '[:space:]' <VERSION)" >>"$GITHUB_ENV"
+
+      # Built and loaded first, tested, and only then pushed: :latest must never be an image the
+      # tests have not run in. The first one published could not unpack a mod (python3-minimal).
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          build-args: |
+            FLUX_IMAGE_VERSION=${{ env.VERSION }}
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test the image
+        run: ./tests/test-image.sh "${IMAGE_NAME}:${{ github.sha }}"
+
+      - name: Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            FLUX_IMAGE_VERSION=${{ env.VERSION }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+          cache-from: type=gha
