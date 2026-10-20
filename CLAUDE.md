@@ -36,3 +36,5 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -x scripts/*.s
   settings run after each mode's own rules. `server.cfg` runs BEFORE them: round time etc. set there are overwritten.
 - **Workshop maps download anonymously** (`host_workshop_map <id>` loads it; measured).
 - Every user value is a `CS2_*` env, validated in `flux-launch.py`; a bad one is left out with a warning, never a crash.
+- **`flux.log` is local** (`$FLUX_SERVER_DIR/flux-logs/flux.log`, 5 MB then one `.1`), never on the synced data volume: a constantly written file there is constant Syncthing traffic. `flux_log_migrate` moves an old one off the data volume at start. `flux_banner` prints the FluxCloud banner at container start and every generation; its text is tested.
+- **The scheduled CI run publishes only with something to apply** (`.github/ci/needs-rebuild.sh`): urgent security updates, or commits on main since the published `:latest` (label `org.opencontainers.image.revision`) that touch the image inputs.

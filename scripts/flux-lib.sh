@@ -14,8 +14,11 @@
 FLUX_SERVER_DIR="${FLUX_SERVER_DIR:-/mnt/cs2/server}"
 FLUX_DATA_DIR="${FLUX_DATA_DIR:-/mnt/cs2/data}"
 FLUX_GAME_DIR="${FLUX_GAME_DIR:-${FLUX_SERVER_DIR}/game/csgo}"
-FLUX_LOG="${FLUX_LOG:-${FLUX_DATA_DIR}/flux/flux.log}"
-FLUX_LOG_MAX_LINES="${FLUX_LOG_MAX_LINES:-2000}"
+# flux.log is on the INSTALL volume (local, never synced): it is written on every line, and on the
+# synced data volume that would be constant Syncthing traffic. One rotated copy (flux.log.1).
+FLUX_LOG_DIR="${FLUX_LOG_DIR:-${FLUX_SERVER_DIR}/flux-logs}"
+FLUX_LOG="${FLUX_LOG-${FLUX_LOG_DIR}/flux.log}"
+FLUX_LOG_MAX_BYTES="${FLUX_LOG_MAX_BYTES:-5242880}"
 # The console logs: on the INSTALL volume (local), not the synced data one: they churn all day
 # and Syncthing would copy every line.
 FLUX_GAME_LOG_DIR="${FLUX_GAME_LOG_DIR:-${FLUX_SERVER_DIR}/flux-logs}"
@@ -38,23 +41,55 @@ FLUX_STATE_FILE="${FLUX_STATE_FILE:-/tmp/flux-state.json}"
 # "<generation> <epoch it started>": the hub's way to see a restart is over.
 FLUX_GENERATION_FILE="${FLUX_GENERATION_FILE:-/tmp/flux-generation}"
 
-flux_log() {
-  local line
-  line="$(date -u '+%Y-%m-%dT%H:%M:%SZ') [flux] $*"
-  printf '%s\n' "${line}"
+# One line, to the container's output and (when FLUX_LOG is set) to flux.log, rotated at
+# FLUX_LOG_MAX_BYTES (the old file becomes flux.log.1).
+flux_log_raw() {
+  printf '%s\n' "$1"
   if [ -n "${FLUX_LOG}" ] && mkdir -p "$(dirname "${FLUX_LOG}")" 2>/dev/null; then
-    printf '%s\n' "${line}" >>"${FLUX_LOG}" 2>/dev/null || return 0
-    flux_trim_file "${FLUX_LOG}" "${FLUX_LOG_MAX_LINES}"
+    printf '%s\n' "$1" >>"${FLUX_LOG}" 2>/dev/null || return 0
+    flux_rotate_log "${FLUX_LOG}" "${FLUX_LOG_MAX_BYTES}"
   fi
+  return 0
 }
 
-# Keeps the last $2 lines of $1. Checked cheaply first: most calls change nothing.
-flux_trim_file() {
-  local file="$1" max="$2" lines
-  lines="$(wc -l <"${file}" 2>/dev/null || echo 0)"
-  if [ "${lines}" -gt $((max + max / 10)) ]; then
-    tail -n "${max}" "${file}" >"${file}.tmp" 2>/dev/null && mv "${file}.tmp" "${file}"
+flux_log() {
+  flux_log_raw "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [flux] $*"
+}
+
+# Moves $1 to $1.1 (replacing the previous one) once it is larger than $2 bytes.
+flux_rotate_log() {
+  local size
+  size="$(stat -c %s "$1" 2>/dev/null || echo 0)"
+  if [ "${size}" -gt "$2" ] 2>/dev/null; then
+    mv -f "$1" "$1.1" 2>/dev/null
   fi
+  return 0
+}
+
+# The start-up banner, through the normal log path (docker logs, the panel's log). ASCII only.
+# $1 = the game's name.
+flux_banner() {
+  local rule='====================================================================='
+  flux_log_raw "${rule}"
+  flux_log_raw " $1 server image by FluxCloud - https://runonflux.com"
+  flux_log_raw " Host this and 30+ other games in one click: https://runonflux.com/games"
+  flux_log_raw "${rule}"
+}
+
+# Once per start: a flux.log an older image left on the synced data volume ($@) is appended to
+# the new one and deleted there, so Syncthing stops carrying it.
+flux_log_migrate() {
+  local old
+  [ -n "${FLUX_LOG}" ] || return 0
+  for old in "$@"; do
+    [ -f "${old}" ] && [ "${old}" != "${FLUX_LOG}" ] || continue
+    mkdir -p "$(dirname "${FLUX_LOG}")" 2>/dev/null
+    if [ -s "${old}" ]; then
+      cat "${old}" >>"${FLUX_LOG}" 2>/dev/null || continue
+    fi
+    rm -f "${old}" "${old}.tmp"
+  done
+  return 0
 }
 
 flux_truthy() {

@@ -28,8 +28,8 @@ the data volume the moment it is made, so a stop or a kill loses nothing.
 
 | Path | Flux mount | What |
 |---|---|---|
-| `/mnt/cs2/data` | `g:` (synced, small) | `cfg/` (`server.cfg`, `flux/settings.cfg`, `flux/mapcycle.txt`, plugin cfgs), `css/` (plugins, configs, admins, gamedata), `banned_user.cfg`, `banned_ip.cfg`, `flux/` (our log, backups, addon state) |
-| `/mnt/cs2/server` | `ml:server` (local, never synced) | the game, **about 69 GB**, and the console logs (`flux-logs/`, 10 MB each, the newest 5) |
+| `/mnt/cs2/data` | `g:` (synced, small) | `cfg/` (`server.cfg`, `flux/settings.cfg`, `flux/mapcycle.txt`, plugin cfgs), `css/` (plugins, configs, admins, gamedata), `banned_user.cfg`, `banned_ip.cfg`, `flux/` (backups, addon state) |
+| `/mnt/cs2/server` | `ml:server` (local, never synced) | the game, **about 69 GB**, and the console logs (`flux-logs/`, 10 MB each, the newest 5) Also `flux-logs/flux.log` (our supervisor log, 5 MB then one `.1`): local, never synced. |
 
 Spec: `g:/mnt/cs2/data|ml:server:/mnt/cs2/server`. Never put the server volume on a `g:` mount: Syncthing
 would copy 69 GB.
@@ -115,3 +115,4 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -x scripts/*.s
 ## Versions
 
 - **1.0.0**: first release.
+- **1.0.1**: `flux.log` moved off the synced data volume to `/mnt/cs2/server/flux-logs/flux.log` (5 MB, one `.1`; an old one is moved there once); start-up banner; the weekly rebuild only when it has something to apply (new script `.github/ci/needs-rebuild.sh`).

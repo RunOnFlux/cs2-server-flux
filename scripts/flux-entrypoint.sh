@@ -51,6 +51,9 @@ safe_mode="${d}/flux/safe-mode"
 
 rm -f "${FLUX_RESTART_MARKER}"
 mkdir -p "${s}" "${d}/flux" "$(dirname "${FLUX_LOG}")" "${FLUX_GAME_LOG_DIR}"
+# An older image kept flux.log on the synced data volume: move it here, once.
+flux_log_migrate "${FLUX_DATA_DIR}/flux/flux.log"
+flux_banner "Counter-Strike 2"
 
 port="$(flux_valid_port "${GAME_PORT:-27015}")" || port=""
 export GAME_PORT="${port:-${GAME_PORT:-27015}}"
@@ -397,6 +400,7 @@ start_generation() {
   flux_prune "${FLUX_GAME_LOG_DIR}" '*-console.log' "${FLUX_GAME_LOG_KEEP}"
   [ "${terminating}" = "1" ] && return 2
 
+  flux_banner "Counter-Strike 2"
   flux_log "starting the server (generation ${generation}, addons $([ "${addons_loaded}" = 1 ] && echo loaded || echo not loaded))"
   (
     cd "${s}" || exit 1
