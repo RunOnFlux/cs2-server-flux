@@ -85,7 +85,11 @@ def build():
     args += ['-maxplayers', maxplayers]
     # The ban lists: the server does not read them as it starts (measured: listid empty after a
     # restart with two bans in cfg/banned_user.cfg), so a ban written with writeid would be gone.
-    args += ['+exec', 'banned_user.cfg', '+exec', 'banned_ip.cfg', '+log', 'on', '+sv_logecho', '1']
+    args += ['+exec', 'banned_user.cfg', '+exec', 'banned_ip.cfg']
+    # Timed bans still running (fluxcs2.py write-timedbans), with the minutes they have left.
+    if os.path.isfile(os.environ.get('FLUX_TIMED_BANS_CFG', '/mnt/cs2/data/cfg/flux/timedbans.cfg')):
+        args += ['+exec', 'flux/timedbans.cfg']
+    args += ['+log', 'on', '+sv_logecho', '1']
 
     mode = (env('CS2_GAME_MODE') or DEFAULT_MODE).lower()
     if mode not in MODES:

@@ -34,6 +34,8 @@ For the supervisor (not the hub):
                                        FLUX_BACKUP_MIN_AGE_MINUTES (60) and `force` is not given; then pruning
     fluxcs2.py apply-restore           a restore the hub asked for, before the server starts
     fluxcs2.py write-mapgroup          game/csgo/gamemodes_server.txt from cfg/flux/mapcycle.txt
+    fluxcs2.py workshop-remove <id>    delete a downloaded Workshop map and its manifest entry (not the one being played)
+    fluxcs2.py write-timedbans         cfg/flux/timedbans.cfg: the timed bans still running, with their minutes left
 
 Everything the owner makes is on the data volume (/mnt/cs2/data); the install links to it. Names are
 file names, never paths: anything that would leave its folder is refused.
@@ -78,12 +80,18 @@ BACKUP_REASONS = os.path.join(BACKUPS, "reasons.json")
 RESTORE_REQUEST = os.path.join(STATE_DIR, "restore-request")
 RESTART_MARKER = os.environ.get("FLUX_RESTART_MARKER", "/tmp/flux-restart-requested")
 GENERATION_FILE = os.environ.get("FLUX_GENERATION_FILE", "/tmp/flux-generation")
+STEAM_LOG = os.environ.get("FLUX_STEAM_LOG", "/tmp/steamcmd.log")
 CATALOG = os.environ.get("FLUX_PLUGIN_CATALOG", os.path.join(os.path.dirname(os.path.realpath(__file__)), "plugins.json"))
 BANNED_USER = os.path.join(DATA, "banned_user.cfg")
 BANNED_IP = os.path.join(DATA, "banned_ip.cfg")
+# Timed bans: the game keeps only permanent bans on disk, and the server restarts on every game update, so
+# a timed ban is also written here (with the moment it ends) and put back at the next start with the
+# minutes it has left (cfg/flux/timedbans.cfg, exec'd by the launcher).
+BANNED_TIMED = os.path.join(DATA, "banned_timed.json")
+TIMED_CFG = os.path.join(CFG, "flux", "timedbans.cfg")
 # What a backup holds: everything the owner made, all on the data volume. Plugin logs are left out
 # (they only grow); the game and the addons themselves are downloaded again on any node.
-BACKUP_ITEMS = ["cfg", "css", "banned_user.cfg", "banned_ip.cfg"]
+BACKUP_ITEMS = ["cfg", "css", "banned_user.cfg", "banned_ip.cfg", "banned_timed.json"]
 BACKUP_EXCLUDE = re.compile(r"^css/(logs|plugins/[^/]+/logs)(/|$)")
 BACKUP_NAME = re.compile(r"^\d{8}-\d{6}-cs2\.tar\.gz$")
 
@@ -183,6 +191,59 @@ def workshop_maps():
             pass
         rows.append({"id": i, "title": title.group(1) if title else None, "map": folder.group(1) if folder else None, "size": size})
     return rows
+
+
+WORKSHOP_DIR = os.path.join(SERVER, "game", "bin", "linuxsteamrt64", "steamapps", "workshop")
+
+
+def acf_without_item(text, item_id):
+    """Valve's appworkshop_730.acf with one item's blocks removed from WorkshopItemsInstalled and
+    WorkshopItemDetails. Left in, SteamCMD and the game think the item is installed and never fetch it again."""
+    out_lines = []
+    skip_depth = None
+    depth = 0
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if skip_depth is None and stripped == f'"{item_id}"':
+            skip_depth = depth          # the block's own braces follow on the next lines
+            continue
+        if skip_depth is not None:
+            if stripped == "{":
+                depth += 1
+            elif stripped == "}":
+                depth -= 1
+                if depth == skip_depth:
+                    skip_depth = None
+            continue
+        if stripped == "{":
+            depth += 1
+        elif stripped == "}":
+            depth -= 1
+        out_lines.append(line)
+    return "".join(out_lines)
+
+
+def cmd_workshop_remove(item_id):
+    """Delete a downloaded Workshop map (its folder and its entry in the manifest) to free the disk.
+    Refused while the server is playing it. It is downloaded again by playing it, as the first time."""
+    if not re.fullmatch(r"\d{4,20}", str(item_id)):
+        fail("Expected a Workshop item ID.")
+    folder = os.path.join(WORKSHOP_DIR, "content", "730", item_id)
+    if not os.path.isdir(folder):
+        fail("That Workshop map is not on the server.")
+    row = next((w for w in workshop_maps() if w["id"] == item_id), {})
+    info, _players = query() if load_state().get("state") in ("running", "starting") else (None, None)
+    playing = (info or {}).get("map")
+    if playing and (playing == item_id or playing == row.get("map") or playing.endswith("/" + str(row.get("map")))):
+        fail("The server is playing that map right now. Change the map first.")
+    size = row.get("size", 0)
+    shutil.rmtree(folder)
+    shutil.rmtree(os.path.join(WORKSHOP_DIR, "downloads", "730", item_id), ignore_errors=True)
+    acf = os.path.join(WORKSHOP_DIR, "appworkshop_730.acf")
+    text = read(acf)
+    if text:
+        write_text(acf, acf_without_item(text, item_id))
+    out({"ok": True, "removed": item_id, "freedBytes": size})
 
 
 def mapcycle():
@@ -616,6 +677,52 @@ def parse_bans(user_text, ip_text):
     return bans
 
 
+def timed_bans(now=None):
+    """The timed bans still running: [{kind, id, until}], the ended ones dropped from the file."""
+    now = int(now if now is not None else time.time())
+    rows = read_json(BANNED_TIMED, [])
+    rows = rows if isinstance(rows, list) else []
+    live = [r for r in rows if isinstance(r, dict) and r.get("kind") in ("id", "ip") and r.get("id") and int(r.get("until") or 0) > now]
+    if len(live) != len(rows):
+        write_text(BANNED_TIMED, json.dumps(live))
+    return live
+
+
+def timed_remember(kind, ident, minutes, now=None):
+    now = int(now if now is not None else time.time())
+    rows = [r for r in timed_bans(now) if not (r["kind"] == kind and r["id"] == ident)]
+    if int(minutes) > 0:
+        rows.append({"kind": kind, "id": ident, "until": now + int(minutes) * 60})
+    write_text(BANNED_TIMED, json.dumps(rows))
+
+
+def timed_forget(kind, ident):
+    rows = [r for r in timed_bans() if not (r["kind"] == kind and r["id"] == ident)]
+    write_text(BANNED_TIMED, json.dumps(rows))
+
+
+def timed_rows(now=None):
+    """The timed bans as the Bans tab lists them: minutes left, and `timed`."""
+    now = int(now if now is not None else time.time())
+    out_rows = []
+    for r in timed_bans(now):
+        left = max(1, -(-(int(r["until"]) - now) // 60))
+        row = {"kind": r["kind"], "id": r["id"], "minutes": left, "timed": True}
+        if r["kind"] == "id":
+            row["steam64"] = steam64(r["id"])
+        out_rows.append(row)
+    return out_rows
+
+
+def cmd_write_timedbans():
+    """cfg/flux/timedbans.cfg: a banid / addip with the minutes left for every running timed ban."""
+    lines = []
+    for r in timed_rows():
+        lines.append(("banid" if r["kind"] == "id" else "addip") + f" {r['minutes']} {r['id']}")
+    write_text(TIMED_CFG, "// Written by the Flux panel at every start: the timed bans still running.\n" + "".join(l + "\n" for l in lines))
+    out({"ok": True, "timed": len(lines)})
+
+
 # ------------------------------------------------------------------------------------------------
 # files: everything the tabs show, in one call
 # ------------------------------------------------------------------------------------------------
@@ -644,7 +751,7 @@ def cmd_files():
         "plugins": plugins(),
         "catalog": [dict(c, installed=c["id"] in installed) for c in cat],
         "admins": parse_admins(read_json(ADMINS, {})),
-        "bans": parse_bans(read(BANNED_USER), read(BANNED_IP)),
+        "bans": parse_bans(read(BANNED_USER), read(BANNED_IP)) + timed_rows(),
     })
 
 
@@ -798,6 +905,35 @@ def game_port():
         return int(os.environ.get("GAME_PORT") or 27015)
     except ValueError:
         return 27015
+
+
+STEAM_PROGRESS = re.compile(r"Update state \((0x[0-9a-f]+)\) ([a-z ]+?), progress: (\d+(?:\.\d+)?) \((\d+) / (\d+)\)")
+
+
+def steam_progress(text=None):
+    """SteamCMD's last progress line ("Update state (0x61) downloading, progress: 45.20 (30 / 66)", the
+    byte counts), as {phase, percent, doneBytes, totalBytes, at}: what a first start shows instead of a
+    silent hour. None when SteamCMD has printed none (a check that finds nothing to download)."""
+    if text is None:
+        try:
+            with open(STEAM_LOG, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                fh.seek(max(0, size - 200_000))
+                text = fh.read().decode("utf-8", "replace")
+            at = int(os.path.getmtime(STEAM_LOG))
+        except OSError:
+            return None
+    else:
+        at = None
+    last = None
+    # SteamCMD redraws the line with \r: every redraw is a match, the last one is the news.
+    for m in STEAM_PROGRESS.finditer(text):
+        last = m
+    if not last:
+        return None
+    return {"phase": last.group(2).strip(), "percent": float(last.group(3)), "doneBytes": int(last.group(4)),
+            "totalBytes": int(last.group(5)), "at": at}
 
 
 def load_state():
@@ -1005,6 +1141,7 @@ def cmd_status():
         "players": players if players is not None else ([] if info else None),
         "gslt": {"state": g, "login": login, "message": gm},
         "addons": addons_state(),
+        "progress": steam_progress() if state.get("state") == "updating" else None,
         "restartPending": os.path.exists(RESTART_MARKER),
         "restorePending": os.path.exists(RESTORE_REQUEST),
         "lastBackup": (backup_rows() or [{}])[0].get("created"),
@@ -1222,7 +1359,8 @@ def cmd_kick(userid, reason=""):
 
 def cmd_ban(who, minutes="0"):
     """Ban a SteamID (any form) or an IPv4 address, and write the list NOW. minutes 0 = for good.
-    Timed bans live in memory only (the game does not write them down), permanent ones are in the file."""
+    A timed ban is also recorded in banned_timed.json (the game does not write them down) and put back,
+    with the minutes it has left, at the next start; a permanent one is in the game's own file."""
     if not re.fullmatch(r"\d{1,7}", str(minutes)):
         fail("Minutes must be a number; 0 is permanent.")
     if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", who):
@@ -1230,6 +1368,7 @@ def cmd_ban(who, minutes="0"):
             fail("Not a valid IPv4 address.")
         console(f"addip {minutes} {who}")
         console("writeip")
+        timed_remember("ip", who, minutes)
         out({"ok": True, "kind": "ip", "id": who, "minutes": int(minutes)})
         return
     u = steam_u(who)
@@ -1243,6 +1382,7 @@ def cmd_ban(who, minutes="0"):
             write_text(BANNED_USER, text + ("" if text.endswith("\n") or not text else "\n") + line + "\n")
     else:
         console("writeid")
+    timed_remember("id", u, minutes)
     out({"ok": True, "kind": "id", "id": u, "steam64": steam64(u), "minutes": int(minutes)})
 
 
@@ -1250,6 +1390,7 @@ def cmd_unban(who):
     if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", who):
         console(f"removeip {who}")
         console("writeip")
+        timed_forget("ip", who)
         if console("status") is None:
             write_text(BANNED_IP, "".join(l + "\n" for l in (read(BANNED_IP) or "").splitlines() if not re.search(rf"\s{re.escape(who)}\s*$", l)))
         out({"ok": True, "kind": "ip", "id": who})
@@ -1257,6 +1398,7 @@ def cmd_unban(who):
     u = steam_u(who)
     if not u:
         fail("Expected a SteamID64, [U:1:n], STEAM_x:y:z or an IPv4 address.")
+    timed_forget("id", u)
     if console(f"removeid {u}") is None:
         write_text(BANNED_USER, "".join(l + "\n" for l in (read(BANNED_USER) or "").splitlines() if not re.search(rf"\s{re.escape(u)}\s*$", l)))
     else:
@@ -1281,7 +1423,7 @@ def cmd_change_map(target):
 
 def main(argv):
     commands = {
-        "files": (cmd_files, 0), "set-mapcycle": (cmd_set_mapcycle, 1), "write-mapgroup": (cmd_write_mapgroup, 0),
+        "files": (cmd_files, 0), "set-mapcycle": (cmd_set_mapcycle, 1), "write-mapgroup": (cmd_write_mapgroup, 0), "write-timedbans": (cmd_write_timedbans, 0), "workshop-remove": (cmd_workshop_remove, 1),
         "plugin-install": (cmd_plugin_install, 1), "plugin-add": (cmd_plugin_add, 1),
         "plugin-enable": (cmd_plugin_enable, 2), "plugin-remove": (cmd_plugin_remove, 1),
         "set-admins": (cmd_set_admins, 1), "addons-retry": (cmd_addons_retry, 0),

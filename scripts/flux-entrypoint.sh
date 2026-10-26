@@ -384,6 +384,7 @@ start_generation() {
   flux_log "backup (start): $(cs2 backup start 2>&1 | tail -c 300)"
   prepare_addons
   cs2 write-mapgroup >/dev/null 2>&1 || flux_log "WARN could not write the map group"
+  cs2 write-timedbans >/dev/null 2>&1 || flux_log "WARN could not write the timed bans"
   case "$(cs2 gslt-state 2>/dev/null)" in
     missing) flux_log "WARN no Steam Game Server Login Token (CS2_GSLT): the server runs, but it is not logged into Steam, so it is not in the Internet server list. Make a token at steamcommunity.com/dev/managegameservers with App ID 730" ;;
     invalid) flux_log "WARN CS2_GSLT is not a 32-character token (letters A-F and digits): left out, the server is not logged into Steam" ;;

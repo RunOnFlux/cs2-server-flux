@@ -197,5 +197,77 @@ class A2S(unittest.TestCase):
         self.assertEqual(p, [{"name": "Alice", "score": 7, "seconds": 61}])
 
 
+class SteamProgress(unittest.TestCase):
+    def test_last_redraw_wins(self):
+        text = "x\rUpdate state (0x61) downloading, progress: 1.00 (5 / 100)\rUpdate state (0x61) downloading, progress: 45.20 (30000000000 / 66000000000)\r"
+        p = f.steam_progress(text)
+        self.assertEqual((p["phase"], p["percent"], p["doneBytes"], p["totalBytes"]), ("downloading", 45.2, 30000000000, 66000000000))
+
+    def test_other_phases_and_nothing(self):
+        self.assertEqual(f.steam_progress("Update state (0x81) verifying update, progress: 99.50 (8 / 9)")["phase"], "verifying update")
+        self.assertIsNone(f.steam_progress("Success! App '730' already up to date."))
+
+
+class TimedBans(unittest.TestCase):
+    def setUp(self):
+        for path in (f.BANNED_TIMED, f.TIMED_CFG):
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_a_timed_ban_is_remembered_listed_and_put_back_with_the_minutes_left(self):
+        f.timed_remember("id", "[U:1:5]", 60, now=1000)
+        f.timed_remember("ip", "203.0.113.9", 90, now=1000)
+        rows = f.timed_rows(now=1000 + 30 * 60)
+        self.assertEqual([(r["kind"], r["id"], r["minutes"], r["timed"]) for r in rows], [("id", "[U:1:5]", 30, True), ("ip", "203.0.113.9", 60, True)])
+        self.assertEqual(rows[0]["steam64"], f.steam64("[U:1:5]"))
+
+    def test_an_ended_ban_is_dropped(self):
+        f.timed_remember("id", "[U:1:5]", 1, now=1000)
+        self.assertEqual(f.timed_rows(now=1000 + 61), [])
+        self.assertEqual(json.load(open(f.BANNED_TIMED)), [])
+
+    def test_banning_again_replaces_and_unbanning_forgets(self):
+        f.timed_remember("id", "[U:1:5]", 10, now=1000)
+        f.timed_remember("id", "[U:1:5]", 120, now=1000)
+        self.assertEqual(len(f.timed_rows(now=1000)), 1)
+        self.assertEqual(f.timed_rows(now=1000)[0]["minutes"], 120)
+        f.timed_forget("id", "[U:1:5]")
+        self.assertEqual(f.timed_rows(now=1000), [])
+
+    def test_a_permanent_ban_replaces_a_timed_one(self):
+        f.timed_remember("id", "[U:1:5]", 10, now=1000)
+        f.timed_remember("id", "[U:1:5]", 0, now=1000)
+        self.assertEqual(f.timed_rows(now=1000), [])
+
+    def test_the_start_up_file_has_one_command_per_ban(self):
+        import time
+        f.timed_remember("id", "[U:1:5]", 60)
+        f.timed_remember("ip", "203.0.113.9", 90)
+        with redirect_stdout(io.StringIO()):
+            f.cmd_write_timedbans()
+        lines = [l for l in open(f.TIMED_CFG).read().splitlines() if not l.startswith("//")]
+        self.assertEqual(len(lines), 2)
+        self.assertRegex(lines[0], r"^banid (59|60) \[U:1:5\]$")
+        self.assertRegex(lines[1], r"^addip (89|90) 203\.0\.113\.9$")
+
+    def test_backups_carry_the_timed_bans(self):
+        self.assertIn("banned_timed.json", f.BACKUP_ITEMS)
+
+
+class WorkshopManifest(unittest.TestCase):
+    ACF = ('"AppWorkshop"\n{\n\t"appid"\t\t"730"\n\t"WorkshopItemsInstalled"\n\t{\n\t\t"111111"\n\t\t{\n\t\t\t"size"\t"1"\n\t\t}\n\t\t"222222"\n\t\t{\n\t\t\t"size"\t"2"\n\t\t}\n\t}\n'
+           '\t"WorkshopItemDetails"\n\t{\n\t\t"111111"\n\t\t{\n\t\t\t"manifest"\t"9"\n\t\t}\n\t\t"222222"\n\t\t{\n\t\t\t"manifest"\t"8"\n\t\t}\n\t}\n}\n')
+
+    def test_one_item_leaves_both_lists_and_the_rest_is_intact(self):
+        out = f.acf_without_item(self.ACF, "111111")
+        self.assertNotIn("111111", out)
+        self.assertIn('"222222"', out)
+        self.assertEqual(out.count("{"), out.count("}"))
+        self.assertEqual(out.count('"222222"'), 2)
+
+    def test_an_unknown_item_changes_nothing(self):
+        self.assertEqual(f.acf_without_item(self.ACF, "333333"), self.ACF)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

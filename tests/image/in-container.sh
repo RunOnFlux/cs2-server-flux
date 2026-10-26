@@ -152,5 +152,12 @@ check "the banner is in the container output" "0" "$(status grep -q 'Counter-Str
 check "and in flux.log" "0" "$(status grep -q 'Host this and 30+ other games in one click: https://runonflux.com/games' "${fl_srv}/flux-logs/flux.log")"
 check "at the container start and again for each generation" "1" "$([ "$(grep -c 'server image by FluxCloud' /tmp/sup.log)" -ge 2 ] && echo 1 || echo 0)"
 
+# --- The first download's progress, from SteamCMD's own line -----------------------------------------
+python3 /opt/flux/fluxcs2.py state updating "Downloading Counter-Strike 2 from Steam" >/dev/null
+printf 'Update state (0x61) downloading, progress: 12.50 (10 / 80)\rUpdate state (0x61) downloading, progress: 50.00 (40 / 80)\r' >/tmp/steamcmd.log
+check "status carries SteamCMD's progress while updating" "50.0 40 80" "$(flux-cs2 status | python3 -c 'import json,sys;p=json.load(sys.stdin)["progress"];print(p["percent"],p["doneBytes"],p["totalBytes"])')"
+python3 /opt/flux/fluxcs2.py state running >/dev/null
+check "and none once the server runs" "None" "$(flux-cs2 status | python3 -c 'import json,sys;print(json.load(sys.stdin)["progress"])')"
+
 printf '%s passed, %s failed\n' "${pass}" "${fail}"
 [ "${fail}" = "0" ]

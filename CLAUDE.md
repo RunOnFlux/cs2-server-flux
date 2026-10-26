@@ -27,7 +27,8 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -x scripts/*.s
   (`/tmp/flux-launch.err`) and are logged after. tf2/gmod images still have the old form.
 - **cs2 exits 127 after a clean quit** and, with CounterStrikeSharp loaded, can hang printing "stack smashing" after
   `Source2Shutdown`: the supervisor ends it 3 s after that line, and FLUX_STOP_GRACE is 8 s (Docker stops at 10).
-- **`banid` wants `[U:1:n]`**, not a SteamID64 (it reads the number as a user id). Timed bans are never written by `writeid`.
+- **`banid` wants `[U:1:n]`**, not a SteamID64 (it reads the number as a user id). Timed bans are never written by `writeid`: `flux-cs2 ban <id> <minutes>` also records them in `banned_timed.json` and `write-timedbans` (every start) turns the ones still running into `cfg/flux/timedbans.cfg`, exec'd by the launcher (verified live: `listid` shows the minutes left after a restart).
+- **Workshop maps**: `workshop-remove` must also take the item out of `steamapps/workshop/appworkshop_730.acf`; the game re-downloads it on the next `host_workshop_map` (verified). A map cycle with Workshop maps and a live `mapgroup` are NOT verified: `changelevel workshop/<id>/<map>` is "invalid map name", and a bots-only server never plays a round, so a match end could not be observed.
 - **The version line of `status` is the Steam login**: `[G:1:..]` valid token, `[A:1:..]` anonymous (no token),
   `[I:0:1]` + "disconnected from Steam3" = token not accepted. A2S does not flag `sv_password`.
 - **Roster SteamIDs** come from the console log (`log on` + `sv_logecho 1` are launch args); `status` has none.
