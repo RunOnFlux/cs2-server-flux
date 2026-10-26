@@ -203,6 +203,13 @@ class SteamProgress(unittest.TestCase):
         p = f.steam_progress(text)
         self.assertEqual((p["phase"], p["percent"], p["doneBytes"], p["totalBytes"]), ("downloading", 45.2, 30000000000, 66000000000))
 
+    def test_real_steamcmd_output_with_colour_codes_and_the_empty_last_line(self):
+        text = ("\x1b[0m Update state (0x61) downloading, progress: 0.00 (0 / 111284048)\n"
+                "\x1b[0m Update state (0x81) verifying update, progress: 41.21 (45859296 / 111284048)\n"
+                "\x1b[0m Update state (0x0) unknown, progress: 0.00 (0 / 0)\n")
+        p = f.steam_progress(text)
+        self.assertEqual((p["phase"], p["percent"], p["totalBytes"]), ("verifying update", 41.21, 111284048))
+
     def test_other_phases_and_nothing(self):
         self.assertEqual(f.steam_progress("Update state (0x81) verifying update, progress: 99.50 (8 / 9)")["phase"], "verifying update")
         self.assertIsNone(f.steam_progress("Success! App '730' already up to date."))

@@ -929,7 +929,9 @@ def steam_progress(text=None):
     last = None
     # SteamCMD redraws the line with \r: every redraw is a match, the last one is the news.
     for m in STEAM_PROGRESS.finditer(text):
-        last = m
+        # SteamCMD ends with "Update state (0x0) unknown, progress: 0.00 (0 / 0)": not news.
+        if int(m.group(5)) > 0:
+            last = m
     if not last:
         return None
     return {"phase": last.group(2).strip(), "percent": float(last.group(3)), "doneBytes": int(last.group(4)),

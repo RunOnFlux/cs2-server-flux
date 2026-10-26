@@ -115,5 +115,6 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -x scripts/*.s
 ## Versions
 
 - **1.0.0**: first release.
+- **1.0.3**: the progress line SteamCMD ends with (`unknown, progress: 0.00 (0 / 0)`) is ignored. Format checked against real SteamCMD output (app 1007).
 - **1.0.2**: SteamCMD's download progress in `flux-cs2 status` (`progress`: phase, percent, bytes) while `updating`; timed bans survive a restart (`banned_timed.json` on the data volume, put back at each start with the minutes they have left through `cfg/flux/timedbans.cfg`; listed by `flux-cs2 files` with `timed: true`); `flux-cs2 workshop-remove <id>` deletes a downloaded Workshop map and its manifest entry (refused while it is played).
 - **1.0.1**: `flux.log` moved off the synced data volume to `/mnt/cs2/server/flux-logs/flux.log` (5 MB, one `.1`; an old one is moved there once); start-up banner; the weekly rebuild only when it has something to apply (new script `.github/ci/needs-rebuild.sh`).
