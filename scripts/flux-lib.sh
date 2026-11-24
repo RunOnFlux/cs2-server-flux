@@ -251,7 +251,7 @@ flux_next_daily() {
   local now="$1" at
   at="$(date -d "$(date -d "@${now}" +%F) $2" +%s 2>/dev/null)" || return 1
   if [ "${at}" -le "${now}" ]; then
-    at="$(date -d "$(date -d "@$((now + 86400))" +%F) $2" +%s 2>/dev/null)" || return 1
+    at="$(date -d "$(date -d "$(date -d "@${now}" +%F) + 1 day" +%F) $2" +%s 2>/dev/null)" || return 1
   fi
   printf '%s' "${at}"
 }

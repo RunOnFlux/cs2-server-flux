@@ -31,6 +31,10 @@ check "restart time 25:00 is refused" "1" "$(status flux_restart_time 25:00)"
 check "restart time abc is refused" "1" "$(status flux_restart_time abc)"
 check "next daily is today when ahead" "$(date -u -d '2026-03-01 04:30' +%s)" "$(TZ=UTC flux_next_daily "$(date -u -d '2026-03-01 03:00' +%s)" 04:30)"
 check "next daily is tomorrow when passed" "$(date -u -d '2026-03-02 04:30' +%s)" "$(TZ=UTC flux_next_daily "$(date -u -d '2026-03-01 05:00' +%s)" 04:30)"
+# Clock changes (Europe/Lisbon, 2026): 10-25 a 25 h day, 03-29 a 23 h day.
+lis() { TZ=Europe/Lisbon date -d "@$(TZ=Europe/Lisbon flux_next_daily "$(TZ=Europe/Lisbon date -d "$1" +%s)" "$2")" '+%F %H:%M'; }
+check "the 25-hour day: 00:15 already passed, the next is tomorrow's, not a repeat an hour on" "2026-10-26 00:15" "$(lis '2026-10-25 00:30' 00:15)"
+check "the 23-hour day: 23:30 asking for 23:00 gets the next day, not a skipped one" "2026-03-29 23:00" "$(lis '2026-03-28 23:30' 23:00)"
 check "27015 is a port" "27015" "$(flux_valid_port 27015)"
 check "port 80 is refused" "1" "$(status flux_valid_port 80)"
 check "a word is not a port" "1" "$(status flux_valid_port abc)"
