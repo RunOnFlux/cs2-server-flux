@@ -898,9 +898,10 @@ def cmd_apply_restore():
     if not BACKUP_NAME.match(name) or not os.path.isfile(src):
         record_restore(name, False, "the backup to restore is gone")
         fail(f"the backup to restore is gone: {name}")
-    safety = make_backup(f"before restoring {name}")
-    staging = tempfile.mkdtemp(dir=STATE_DIR, prefix="restore-")
+    staging = None
     try:
+        safety = make_backup(f"before restoring {name}")
+        staging = tempfile.mkdtemp(dir=STATE_DIR, prefix="restore-")
         with tarfile.open(src, "r:gz") as tar:
             tar.extractall(staging, filter="data")
         for item in BACKUP_ITEMS:
@@ -919,7 +920,8 @@ def cmd_apply_restore():
         record_restore(name, False, str(e)[:200])
         raise
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        if staging:
+            shutil.rmtree(staging, ignore_errors=True)
     record_restore(name, True)
     out({"ok": True, "restored": name, "safetyBackup": safety})
 
@@ -1179,6 +1181,8 @@ def cmd_status():
         "since": state.get("since"),
         "runningSince": state.get("runningSince"),
         "generation": gen["n"] if gen else int(state.get("generation") or 0),
+        # The count restarts at 1 in a new container; only `since` tells that first server from the last.
+        "generationSince": gen["since"] if gen else None,
         "gameMode": (os.environ.get("CS2_GAME_MODE") or "competitive").lower(),
         "serverName": info["name"] if info else (os.environ.get("CS2_HOSTNAME") or None),
         "map": info["map"] if info else None,

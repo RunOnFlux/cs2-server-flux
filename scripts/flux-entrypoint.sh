@@ -395,7 +395,8 @@ wait_for_empty() {
 # ask the server to quit; the supervisor starts the next generation, which also updates the game.
 restart_watcher() {
   local next
-  next="$(flux_next_daily "$(date -u +%s)" "${restart_at}")" || return 0
+  # A time that does not exist today (the clock jumps over it) has no next occurrence: look again in an hour.
+  until next="$(flux_next_daily "$(date -u +%s)" "${restart_at}")"; do sleep 3600; done
   printf '%s\n' "${next}" >"${FLUX_NEXT_RESTART_FILE}"
   while [ "$(date -u +%s)" -lt "${next}" ]; do sleep 30; done
   flux_log "daily restart (${restart_at} ${TZ:-UTC}): waiting up to ${FLUX_RESTART_WAIT_MINUTES} min for an empty server"

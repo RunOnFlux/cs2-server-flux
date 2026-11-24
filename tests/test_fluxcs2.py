@@ -289,9 +289,6 @@ class WorkshopManifest(unittest.TestCase):
         self.assertEqual(f.acf_without_item(self.ACF, "333333"), self.ACF)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=1)
-
 
 class AdminsFile(unittest.TestCase):
     def setUp(self):
@@ -335,6 +332,14 @@ class LastRestore(unittest.TestCase):
         self.assertTrue(rec["at"] > 0)
 
 
+class GenerationInStatus(unittest.TestCase):
+    def test_status_carries_the_since_that_tells_a_new_container_apart(self):
+        with open(f.GENERATION_FILE, "w") as fh:
+            fh.write("1 1700000000\n")
+        s = run(f.cmd_status)
+        self.assertEqual((s["generation"], s["generationSince"]), (1, 1700000000))
+
+
 class NextRestart(unittest.TestCase):
     def test_reads_the_supervisors_file(self):
         f.NEXT_RESTART_FILE = TMP + "/next"
@@ -342,3 +347,7 @@ class NextRestart(unittest.TestCase):
         with open(f.NEXT_RESTART_FILE, "w") as fh:
             fh.write("1800000000\n")
         self.assertEqual(f.next_restart_epoch(), 1800000000)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=1)
