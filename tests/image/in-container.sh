@@ -159,5 +159,18 @@ check "status carries SteamCMD's progress while updating" "50.0 40 80" "$(flux-c
 python3 /opt/flux/fluxcs2.py state running >/dev/null
 check "and none once the server runs" "None" "$(flux-cs2 status | python3 -c 'import json,sys;print(json.load(sys.stdin)["progress"])')"
 
+# --- The daily restart: CS2_RESTART_TIME a minute ahead, no wait for an empty server --------------------
+rm -f /tmp/flux-generation /tmp/flux-restart-requested
+soon="$(date -u -d '+1 minute' +%H:%M)"
+CS2_RESTART_TIME="${soon}" FLUX_RESTART_WAIT_MINUTES=0 TZ=UTC GAME_PORT=31001 CS2_RCON_PASSWORD=abc12345 \
+  /opt/flux/flux-entrypoint.sh >/tmp/sup2.log 2>&1 &
+sup2=$!
+check "the next restart is published for the hub" "0" "$(status wait_for "test -s /tmp/flux-next-restart" 30)"
+check "status carries it" "1" "$(flux-cs2 status | python3 -c 'import json,sys;print(int(json.load(sys.stdin)["nextRestart"]>0))')"
+check "the server is restarted at that time" "0" "$(status wait_for "grep -q 'planned: the daily restart' /tmp/sup2.log && test \"\$(cut -d' ' -f1 /tmp/flux-generation)\" = 2" 110)"
+check "a planned restart is not counted as a crash" "0" "$(grep -c 'restarts within' /tmp/sup2.log)"
+kill -TERM "${sup2}"
+wait "${sup2}"
+
 printf '%s passed, %s failed\n' "${pass}" "${fail}"
 [ "${fail}" = "0" ]

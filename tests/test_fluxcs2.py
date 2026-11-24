@@ -135,6 +135,19 @@ class Bans(unittest.TestCase):
         run(f.cmd_unban, "[U:1:12345]")
         self.assertEqual(open(f.BANNED_USER).read(), "")
 
+    def test_ip_ban_with_no_server_writes_the_file(self):
+        os.makedirs(f.DATA, exist_ok=True)
+        f.BANNED_IP = os.path.join(f.DATA, "banned_ip.cfg")
+        if os.path.exists(f.BANNED_IP):
+            os.remove(f.BANNED_IP)
+        r = run(f.cmd_ban, "203.0.113.9", "0")
+        self.assertTrue(r["ok"])
+        self.assertEqual(open(f.BANNED_IP).read(), "addip 0 203.0.113.9\n")
+        run(f.cmd_ban, "203.0.113.9", "0")
+        self.assertEqual(open(f.BANNED_IP).read().count("addip"), 1)
+        rows = f.parse_bans("", open(f.BANNED_IP).read())
+        self.assertEqual([(r["kind"], r["id"]) for r in rows], [("ip", "203.0.113.9")])
+
     def test_bad_input(self):
         self.assertFalse(run(f.cmd_ban, "not a steam id")["ok"])
         self.assertFalse(run(f.cmd_ban, "999.1.1.1")["ok"])
@@ -274,6 +287,66 @@ class WorkshopManifest(unittest.TestCase):
 
     def test_an_unknown_item_changes_nothing(self):
         self.assertEqual(f.acf_without_item(self.ACF, "333333"), self.ACF)
+
+
+
+class AdminsFile(unittest.TestCase):
+    def setUp(self):
+        os.makedirs(os.path.dirname(f.ADMINS), exist_ok=True)
+
+    def test_unreadable_admins_file_is_never_overwritten(self):
+        broken = '{"Owner": {"identity": "76561197960278073", "flags": ["@css/root"],},}'  # trailing commas
+        with open(f.ADMINS, "w") as fh:
+            fh.write(broken)
+        self.assertTrue(f.json_unreadable(f.ADMINS))
+        r = run(f.cmd_set_admins, json.dumps([{"id": "76561197960278074", "flags": ["@css/kick"]}]))
+        self.assertFalse(r["ok"])
+        self.assertEqual(open(f.ADMINS).read(), broken)
+
+    def test_missing_or_blank_file_is_fine(self):
+        if os.path.exists(f.ADMINS):
+            os.remove(f.ADMINS)
+        self.assertFalse(f.json_unreadable(f.ADMINS))
+        r = run(f.cmd_set_admins, json.dumps([{"id": "76561197960278074", "flags": ["@css/kick"]}]))
+        self.assertTrue(r["ok"])
+        with open(f.ADMINS, "w") as fh:
+            fh.write("  \n")
+        self.assertFalse(f.json_unreadable(f.ADMINS))
+
+    def test_comments_do_not_count_as_broken(self):
+        with open(f.ADMINS, "w") as fh:
+            fh.write('// admins\n{"Owner": {"identity": "76561197960278073", "flags": []}}\n')
+        self.assertFalse(f.json_unreadable(f.ADMINS))
+
+
+class LastRestore(unittest.TestCase):
+    def test_a_restore_of_a_missing_backup_is_recorded_as_failed(self):
+        os.makedirs(f.STATE_DIR, exist_ok=True)
+        with open(f.RESTORE_REQUEST, "w") as fh:
+            fh.write("20260101-000000-cs2.tar.gz\n")
+        r = run(f.cmd_apply_restore)
+        self.assertFalse(r["ok"])
+        rec = json.load(open(f.LAST_RESTORE))
+        self.assertFalse(rec["ok"])
+        self.assertEqual(rec["name"], "20260101-000000-cs2.tar.gz")
+        self.assertTrue(rec["at"] > 0)
+
+
+class GenerationInStatus(unittest.TestCase):
+    def test_status_carries_the_since_that_tells_a_new_container_apart(self):
+        with open(f.GENERATION_FILE, "w") as fh:
+            fh.write("1 1700000000\n")
+        s = run(f.cmd_status)
+        self.assertEqual((s["generation"], s["generationSince"]), (1, 1700000000))
+
+
+class NextRestart(unittest.TestCase):
+    def test_reads_the_supervisors_file(self):
+        f.NEXT_RESTART_FILE = TMP + "/next"
+        self.assertIsNone(f.next_restart_epoch())
+        with open(f.NEXT_RESTART_FILE, "w") as fh:
+            fh.write("1800000000\n")
+        self.assertEqual(f.next_restart_epoch(), 1800000000)
 
 
 if __name__ == "__main__":

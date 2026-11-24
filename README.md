@@ -53,6 +53,7 @@ served by this image.
 | `CS2_GSLT` | `+sv_setsteamaccount` | the owner's own Game Server Login Token for App ID 730 (32 hex characters) |
 | `CS2_ADDONS` | | `true` (default): Metamod + CounterStrikeSharp. `false`: off, plugins and configs are kept |
 | `CS2_EXTRA_ARGS` | | appended (no port) |
+| `CS2_RESTART_TIME` | | `HH:MM` (in `TZ`, UTC when unset): a daily restart, waiting up to `FLUX_RESTART_WAIT_MINUTES` (30) for an empty server; the next start also takes any game update. Empty or `off` = never. `flux-cs2 status` shows `nextRestart` |
 | `SKIP_UPDATE` | | `true`: do not ask Steam for an update on start |
 
 ### The Steam token
@@ -115,6 +116,7 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -x scripts/*.s
 ## Versions
 
 - **1.0.0**: first release.
+- **1.0.4**: a malformed `admins.json` is never overwritten by `set-admins` (error; `files` has `adminsBroken`); a permanent IP ban made while no server runs is written to `banned_ip.cfg` (it used to report success and save nothing); `status.lastRestore` (`name`, `ok`, `error`, `at`) is the outcome of the last restore; `CS2_RESTART_TIME` daily restart on an empty server (`flux-cs2 players-online`, `status.nextRestart`); SteamCMD's depotcache on the install volume (the Icarus/Rust `0x6` cause; the fresh-install fallback is not ported, it needs old + new on disk for ~70 GB).
 - **1.0.3**: the progress line SteamCMD ends with (`unknown, progress: 0.00 (0 / 0)`) is ignored. Format checked against real SteamCMD output (app 1007).
 - **1.0.2**: SteamCMD's download progress in `flux-cs2 status` (`progress`: phase, percent, bytes) while `updating`; timed bans survive a restart (`banned_timed.json` on the data volume, put back at each start with the minutes they have left through `cfg/flux/timedbans.cfg`; listed by `flux-cs2 files` with `timed: true`); `flux-cs2 workshop-remove <id>` deletes a downloaded Workshop map and its manifest entry (refused while it is played).
 - **1.0.1**: `flux.log` moved off the synced data volume to `/mnt/cs2/server/flux-logs/flux.log` (5 MB, one `.1`; an old one is moved there once); start-up banner; the weekly rebuild only when it has something to apply (new script `.github/ci/needs-rebuild.sh`).

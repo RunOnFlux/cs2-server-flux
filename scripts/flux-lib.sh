@@ -230,3 +230,28 @@ flux_console() {
   # shellcheck disable=SC2016  # expanded by the inner bash, from its own arguments
   timeout 2 bash -c 'printf "%s\n" "$1" >"$2"' _ "${cmd}" "${FLUX_CONSOLE_FIFO}"
 }
+
+
+# $1 = ICARUS_RESTART_TIME as given. Prints HH:MM (in TZ), or "" when off. Returns 1 for a value
+# that is not a time.
+flux_restart_time() {
+  local value="${1-}" h m
+  case "${value,,}" in
+    "" | off | none | false | 0) printf ''; return 0 ;;
+  esac
+  [[ "${value}" =~ ^([0-9]{1,2}):([0-9]{2})$ ]] || return 1
+  h=$((10#${BASH_REMATCH[1]})) m=$((10#${BASH_REMATCH[2]}))
+  [ "${h}" -le 23 ] && [ "${m}" -le 59 ] || return 1
+  printf '%02d:%02d' "${h}" "${m}"
+}
+
+# $1 = now (epoch seconds), $2 = HH:MM in the container's time zone (TZ; UTC when unset). Prints
+# the epoch of the next time it is $2: today when that is still ahead, tomorrow otherwise.
+flux_next_daily() {
+  local now="$1" at
+  at="$(date -d "$(date -d "@${now}" +%F) $2" +%s 2>/dev/null)" || return 1
+  if [ "${at}" -le "${now}" ]; then
+    at="$(date -d "$(date -d "@$((now + 86400))" +%F) $2" +%s 2>/dev/null)" || return 1
+  fi
+  printf '%s' "${at}"
+}

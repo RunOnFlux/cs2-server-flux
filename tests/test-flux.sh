@@ -25,6 +25,12 @@ launch() { env -i PATH="${PATH}" "$@" python3 scripts/flux-launch.py 2>/dev/null
 warnings() { { env -i PATH="${PATH}" "$@" python3 scripts/flux-launch.py >/dev/null; } 2>&1; }
 
 # --- Inputs ------------------------------------------------------------------------------------
+check "restart time 4:30 is 04:30" "04:30" "$(flux_restart_time 4:30)"
+check "restart time off is empty" "" "$(flux_restart_time off)"
+check "restart time 25:00 is refused" "1" "$(status flux_restart_time 25:00)"
+check "restart time abc is refused" "1" "$(status flux_restart_time abc)"
+check "next daily is today when ahead" "$(date -u -d '2026-03-01 04:30' +%s)" "$(TZ=UTC flux_next_daily "$(date -u -d '2026-03-01 03:00' +%s)" 04:30)"
+check "next daily is tomorrow when passed" "$(date -u -d '2026-03-02 04:30' +%s)" "$(TZ=UTC flux_next_daily "$(date -u -d '2026-03-01 05:00' +%s)" 04:30)"
 check "27015 is a port" "27015" "$(flux_valid_port 27015)"
 check "port 80 is refused" "1" "$(status flux_valid_port 80)"
 check "a word is not a port" "1" "$(status flux_valid_port abc)"
