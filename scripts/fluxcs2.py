@@ -140,6 +140,18 @@ def read_json(path, default):
         return default
 
 
+def json_unreadable(path):
+    """True when the file has content that read_json cannot parse (a missing or blank file is fine)."""
+    text = read(path)
+    if text is None or not text.strip():
+        return False
+    try:
+        json.loads(re.sub(r"(?m)^\s*//.*$", "", text))
+        return False
+    except ValueError:
+        return True
+
+
 def generation():
     """(number, epoch) of the server the supervisor runs now: a restart is over when it changes."""
     parts = (read(GENERATION_FILE) or "").split()
@@ -625,6 +637,9 @@ def cmd_set_admins(raw):
         fail("not JSON")
     if not isinstance(admins, list):
         fail("a list of admins")
+    if json_unreadable(ADMINS):
+        # Never write over a file we could not read: that would drop every admin in it.
+        fail("admins.json on the server is not valid JSON, so nothing was changed. Fix or remove /mnt/cs2/data/.../admins.json first.")
     existing = read_json(ADMINS, {})
     if not isinstance(existing, dict):
         existing = {}
@@ -751,6 +766,7 @@ def cmd_files():
         "plugins": plugins(),
         "catalog": [dict(c, installed=c["id"] in installed) for c in cat],
         "admins": parse_admins(read_json(ADMINS, {})),
+        "adminsBroken": json_unreadable(ADMINS),
         "bans": parse_bans(read(BANNED_USER), read(BANNED_IP)) + timed_rows(),
     })
 
@@ -857,6 +873,18 @@ def cmd_restore(name):
          "note": None if sent else "The server is not running: the backup is restored when it next starts."})
 
 
+LAST_RESTORE = os.path.join(STATE_DIR, "last-restore.json")
+
+
+def record_restore(name, ok, error=None):
+    """The outcome of the last restore, for `status`: the supervisor only logs it, and the panel used to
+    say "Restored" whatever happened."""
+    try:
+        write_text(LAST_RESTORE, json.dumps({"name": name, "ok": ok, "error": error, "at": int(time.time())}))
+    except OSError:
+        pass
+
+
 def cmd_apply_restore():
     name = (read(RESTORE_REQUEST) or "").strip()
     if not name:
@@ -868,6 +896,7 @@ def cmd_apply_restore():
         pass
     src = os.path.join(BACKUPS, name)
     if not BACKUP_NAME.match(name) or not os.path.isfile(src):
+        record_restore(name, False, "the backup to restore is gone")
         fail(f"the backup to restore is gone: {name}")
     safety = make_backup(f"before restoring {name}")
     staging = tempfile.mkdtemp(dir=STATE_DIR, prefix="restore-")
@@ -886,8 +915,12 @@ def cmd_apply_restore():
             os.replace(new, cur)
             if os.path.lexists(old):
                 shutil.rmtree(old) if os.path.isdir(old) and not os.path.islink(old) else os.remove(old)
+    except Exception as e:
+        record_restore(name, False, str(e)[:200])
+        raise
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+    record_restore(name, True)
     out({"ok": True, "restored": name, "safetyBackup": safety})
 
 
@@ -941,6 +974,24 @@ def steam_progress(text=None):
 def load_state():
     data = read_json(STATE_FILE, {})
     return data if isinstance(data, dict) else {}
+
+
+NEXT_RESTART_FILE = os.environ.get("FLUX_NEXT_RESTART_FILE", "/tmp/flux-next-restart")
+
+
+def next_restart_epoch():
+    """The epoch of the supervisor's next scheduled restart (it writes the file), or None when none is set."""
+    text = (read(NEXT_RESTART_FILE) or "").strip()
+    return int(text) if text.isdigit() else None
+
+
+def cmd_players_online():
+    """Players on the server right now, bots left out: the supervisor's scheduled restart waits for 0.
+    Prints nothing when the query does not answer (unknown is never 'empty')."""
+    info, _ = query()
+    if info is None:
+        return
+    print(max(0, int(info["players"]) - int(info["bots"] or 0)))
 
 
 def cmd_state(new, message=""):
@@ -1145,7 +1196,9 @@ def cmd_status():
         "addons": addons_state(),
         "progress": steam_progress() if state.get("state") == "updating" else None,
         "restartPending": os.path.exists(RESTART_MARKER),
+        "nextRestart": next_restart_epoch(),
         "restorePending": os.path.exists(RESTORE_REQUEST),
+        "lastRestore": read_json(LAST_RESTORE, None),
         "lastBackup": (backup_rows() or [{}])[0].get("created"),
     })
 
@@ -1368,8 +1421,15 @@ def cmd_ban(who, minutes="0"):
     if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", who):
         if any(int(x) > 255 for x in who.split(".")):
             fail("Not a valid IPv4 address.")
-        console(f"addip {minutes} {who}")
-        console("writeip")
+        if console(f"addip {minutes} {who}") is None:
+            # No server running: the list is the file, add the line there (a timed ban is recorded below
+            # and put back at the next start).
+            line = f"addip {minutes} {who}"
+            text = read(BANNED_IP) or ""
+            if line not in text.splitlines() and minutes == "0":
+                write_text(BANNED_IP, text + ("" if text.endswith("\n") or not text else "\n") + line + "\n")
+        else:
+            console("writeip")
         timed_remember("ip", who, minutes)
         out({"ok": True, "kind": "ip", "id": who, "minutes": int(minutes)})
         return
@@ -1431,7 +1491,7 @@ def main(argv):
         "set-admins": (cmd_set_admins, 1), "addons-retry": (cmd_addons_retry, 0),
         "backups": (cmd_backups, 0), "restore": (cmd_restore, 1),
         "backup": (cmd_backup, (1, 2)), "apply-restore": (cmd_apply_restore, 0),
-        "state": (cmd_state, (1, 2)), "status": (cmd_status, 0), "probe": (cmd_probe, 0), "gslt-state": (cmd_gslt_state, 0),
+        "state": (cmd_state, (1, 2)), "status": (cmd_status, 0), "probe": (cmd_probe, 0), "players-online": (cmd_players_online, 0), "gslt-state": (cmd_gslt_state, 0),
         "settings": (cmd_settings, 0), "set-settings": (cmd_set_settings, 1), "players": (cmd_players, 0),
         "kick": (cmd_kick, (1, 2)), "ban": (cmd_ban, (1, 2)), "unban": (cmd_unban, 1), "change-map": (cmd_change_map, 1),
     }

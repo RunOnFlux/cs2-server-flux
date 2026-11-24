@@ -55,6 +55,16 @@ mkdir -p "${s}" "${d}/flux" "$(dirname "${FLUX_LOG}")" "${FLUX_GAME_LOG_DIR}"
 flux_log_migrate "${FLUX_DATA_DIR}/flux/flux.log"
 flux_banner "Counter-Strike 2"
 
+FLUX_NEXT_RESTART_FILE="${FLUX_NEXT_RESTART_FILE:-/tmp/flux-next-restart}"
+FLUX_RESTART_WAIT_MINUTES="${FLUX_RESTART_WAIT_MINUTES:-30}"
+rm -f "${FLUX_NEXT_RESTART_FILE}"
+# CS2_RESTART_TIME=HH:MM (in TZ, UTC when unset): a daily restart on an empty server; the next start also
+# takes any game update. Empty or off = never.
+if ! restart_at="$(flux_restart_time "${CS2_RESTART_TIME:-}")"; then
+  flux_log "WARN CS2_RESTART_TIME='${CS2_RESTART_TIME}' is not HH:MM; no daily restart"
+  restart_at=""
+fi
+
 port="$(flux_valid_port "${GAME_PORT:-27015}")" || port=""
 export GAME_PORT="${port:-${GAME_PORT:-27015}}"
 rm -f "${FLUX_STATE_FILE}"
@@ -63,6 +73,7 @@ flux_log "flux-entrypoint starting (image ${FLUX_IMAGE_VERSION:-dev}, port ${GAM
 game_pid=""
 backup_pid=""
 ready_pid=""
+restart_pid=""
 game_rc=0
 terminating=0
 generation=0
@@ -93,7 +104,19 @@ trap 'term_handler TERM' TERM
 trap 'term_handler INT' INT
 
 update_server() {
-  local attempt validate steam_pid steam_rc
+  local attempt validate steam_pid steam_rc steam_home
+  # SteamCMD's depotcache onto the INSTALL volume (local to the node, never synced). It holds the manifests of
+  # the installed build, which the NEXT update needs and which Steam refuses to an anonymous login once a build
+  # is old; in the container's own layer they are lost on every redeploy and the first update after it fails
+  # with "state is 0x6 after update job" (Icarus, Rust). The fresh-install fallback those images have is NOT
+  # ported: for a ~70 GB game it would need old + new on the disk at once.
+  steam_home="${HOME:-/root}/.local/share/Steam"
+  mkdir -p "${s}/flux-steam/depotcache" "${steam_home}"
+  if [ ! -L "${steam_home}/depotcache" ]; then
+    [ -d "${steam_home}/depotcache" ] && cp -an "${steam_home}/depotcache/." "${s}/flux-steam/depotcache/" 2>/dev/null
+    rm -rf "${steam_home}/depotcache"
+    ln -s "${s}/flux-steam/depotcache" "${steam_home}/depotcache"
+  fi
   cs2 state updating "Checking Steam for a Counter-Strike 2 update" >/dev/null 2>&1
   if flux_truthy "${SKIP_UPDATE:-}" && [ -x "${s}/game/cs2.sh" ]; then
     flux_log "SKIP_UPDATE is set: not updating the server files"
@@ -356,6 +379,34 @@ ready_watcher() {
   flux_log "WARN the server has not answered the Steam query on port ${GAME_PORT} in 30 minutes"
 }
 
+# Waits for an empty server (no human players) for up to $1 minutes, checking every minute. An unknown
+# count (the query does not answer) is never "empty".
+wait_for_empty() {
+  local until=$(($(date -u +%s) + $1 * 60)) n
+  while [ "$(date -u +%s)" -lt "${until}" ] && [ "${terminating}" = "0" ]; do
+    n="$(cs2 players-online 2>/dev/null)"
+    [ "${n}" = "0" ] && return 0
+    sleep 60
+  done
+  return 0
+}
+
+# The daily restart: at the time set, wait for an empty server (at most FLUX_RESTART_WAIT_MINUTES), then
+# ask the server to quit; the supervisor starts the next generation, which also updates the game.
+restart_watcher() {
+  local next
+  next="$(flux_next_daily "$(date -u +%s)" "${restart_at}")" || return 0
+  printf '%s\n' "${next}" >"${FLUX_NEXT_RESTART_FILE}"
+  while [ "$(date -u +%s)" -lt "${next}" ]; do sleep 30; done
+  flux_log "daily restart (${restart_at} ${TZ:-UTC}): waiting up to ${FLUX_RESTART_WAIT_MINUTES} min for an empty server"
+  wait_for_empty "${FLUX_RESTART_WAIT_MINUTES}"
+  [ "${terminating}" = "1" ] && return 0
+  [ -f "${FLUX_RESTART_MARKER}" ] && return 0
+  printf 'planned: the daily restart (%s %s)\n' "${restart_at}" "${TZ:-UTC}" >"${FLUX_RESTART_MARKER}"
+  flux_log "planned: the daily restart: restarting the server"
+  flux-console quit >/dev/null 2>&1
+}
+
 start_generation() {
   local launch line
   generation=$((generation + 1))
@@ -415,6 +466,11 @@ start_generation() {
   cs2 state starting "Loading ${CS2_MAP:-de_dust2}" >/dev/null 2>&1
   ready_watcher &
   ready_pid=$!
+  rm -f "${FLUX_NEXT_RESTART_FILE}"
+  if [ -n "${restart_at}" ]; then
+    restart_watcher &
+    restart_pid=$!
+  fi
   # The hub waits for this to change to know a restart is over (never the clocks).
   printf '%s %s\n' "${generation}" "${started_at}" >"${FLUX_GENERATION_FILE}"
   backupper &
@@ -425,6 +481,8 @@ start_generation() {
 sweep_generation() {
   [ -n "${ready_pid}" ] && kill "${ready_pid}" 2>/dev/null
   ready_pid=""
+  [ -n "${restart_pid}" ] && kill "${restart_pid}" 2>/dev/null
+  restart_pid=""
   [ -n "${backup_pid}" ] && kill "${backup_pid}" 2>/dev/null
   backup_pid=""
   pkill -KILL -f "${FLUX_GAME_PROCESS}" 2>/dev/null
