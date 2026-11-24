@@ -116,6 +116,7 @@ docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable -x scripts/*.s
 ## Versions
 
 - **1.0.0**: first release.
+- **1.0.5**: the daily restart no longer repeats an hour later or skips a day on the day the clocks change (`flux_next_daily` uses the next calendar day, not now + 86400 s).
 - **1.0.4**: a malformed `admins.json` is never overwritten by `set-admins` (error; `files` has `adminsBroken`); a permanent IP ban made while no server runs is written to `banned_ip.cfg` (it used to report success and save nothing); `status.lastRestore` (`name`, `ok`, `error`, `at`) is the outcome of the last restore; `CS2_RESTART_TIME` daily restart on an empty server (`flux-cs2 players-online`, `status.nextRestart`); SteamCMD's depotcache on the install volume (the Icarus/Rust `0x6` cause; the fresh-install fallback is not ported, it needs old + new on disk for ~70 GB).
 - **1.0.3**: the progress line SteamCMD ends with (`unknown, progress: 0.00 (0 / 0)`) is ignored. Format checked against real SteamCMD output (app 1007).
 - **1.0.2**: SteamCMD's download progress in `flux-cs2 status` (`progress`: phase, percent, bytes) while `updating`; timed bans survive a restart (`banned_timed.json` on the data volume, put back at each start with the minutes they have left through `cfg/flux/timedbans.cfg`; listed by `flux-cs2 files` with `timed: true`); `flux-cs2 workshop-remove <id>` deletes a downloaded Workshop map and its manifest entry (refused while it is played).
