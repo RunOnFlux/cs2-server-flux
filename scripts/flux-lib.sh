@@ -245,13 +245,27 @@ flux_restart_time() {
   printf '%02d:%02d' "${h}" "${m}"
 }
 
+# $1 = day (YYYY-MM-DD), $2 = HH:MM. Prints the epoch of that local time. A time the clocks skip (02:30
+# on the night they go forward) is taken an hour later, which is when that moment is on the new clock.
+flux_local_epoch() {
+  local h m
+  date -d "$1 $2" +%s 2>/dev/null && return 0
+  h=$((10#${2%%:*}))
+  m="${2##*:}"
+  [ "${h}" -lt 23 ] || return 1
+  date -d "$1 $(printf '%02d' $((h + 1))):${m}" +%s 2>/dev/null
+}
+
 # $1 = now (epoch seconds), $2 = HH:MM in the container's time zone (TZ; UTC when unset). Prints
-# the epoch of the next time it is $2: today when that is still ahead, tomorrow otherwise.
+# the epoch of the next time it is $2: today when that is still ahead, tomorrow otherwise. Tomorrow is
+# the next CALENDAR day, not now + 86400 s: the day the clocks go back is 25 hours long.
 flux_next_daily() {
-  local now="$1" at
-  at="$(date -d "$(date -d "@${now}" +%F) $2" +%s 2>/dev/null)" || return 1
+  local now="$1" at day
+  day="$(date -d "@${now}" +%F)"
+  at="$(flux_local_epoch "${day}" "$2")" || return 1
   if [ "${at}" -le "${now}" ]; then
-    at="$(date -d "$(date -d "$(date -d "@${now}" +%F) + 1 day" +%F) $2" +%s 2>/dev/null)" || return 1
+    day="$(date -d "${day} + 1 day" +%F 2>/dev/null)" || return 1
+    at="$(flux_local_epoch "${day}" "$2")" || return 1
   fi
   printf '%s' "${at}"
 }
